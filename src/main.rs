@@ -1,27 +1,37 @@
 extern crate rand;
 extern crate gnuplot;
+extern crate cgmath;
 
 use std::cmp::Ordering;
 use gnuplot::*;
 use std::f32;
 use std::collections::VecDeque;
+use rand::*;
+use cgmath::{Vector, Vector2, EuclideanVector};
 
 const GRAVITY:f32 = 9.81;
-
+const COEFFICIENTS:usize = 4;
 
 fn lerp(src: f32, dst: f32, alpha: f32) -> f32 {
 	src + (dst - src) * alpha
 }
 
-fn random() -> f32 {
-	(rand::random::<f32>() * 2.) - 1.
+fn atmospheric_pressure(h: f32) -> f32 {
+	let H = 70000.;
+	if h >= H {
+		0.
+	}
+	else {
+		f32::consts::E.powf(-h/70000.)
+	}
 }
 
 struct Vessel {
     max_thrust: f32,
     max_burn: f32,
     dry_mass: f32,
-    fuel_mass: f32
+    fuel_mass: f32,
+    cross_section: f32,
 }
 
 impl Vessel {
@@ -29,14 +39,14 @@ impl Vessel {
 		self.dry_mass + self.fuel_mass
 	}
 
-	fn find_throttle_for_TWR(&self, twr: f32) -> f32 {
+	fn find_throttle_for_twr(&self, twr: f32) -> f32 {
 		(twr * self.mass() * GRAVITY) / self.max_thrust
 	}
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone,Debug)]
 struct Control {
-    coeff: [f32; 2],
+    coeff: [f32; COEFFICIENTS],
     twr: f32,
     fitness: Option<f32>
 }
@@ -44,19 +54,19 @@ struct Control {
 impl Control {
     fn zero() -> Self {
     	Control {
-    		coeff:[0.;2],
+    		coeff:[0.;COEFFICIENTS],
     		twr: 1.5, //maybe it should vary?
     		fitness: None
     	}
     }
 
-    fn random() -> Self {
-    	let mut s = Control::zero();
-    	for c in &mut s.coeff {
-    		*c = random();
-    	}
-    	s
-    }
+   	fn duplicate(&self) -> Self {
+		Control {
+			coeff: self.coeff,
+			twr: self.twr,
+			fitness: None
+		}
+	}
 
     fn lerp(a: &Self, b:&Self, s: f32) -> Self {
     	let mut res = Control::zero();
@@ -69,12 +79,19 @@ impl Control {
     }
 
     fn mutated(&self) -> Self {
-    	let mut res = Control::zero();
+    	let mut res = Control::duplicate(self);
+    	let ptr: *mut Control = &mut res;
+		let bytes: *mut u8 = ptr as *mut u8;
+		unsafe {
+			let bitlen = std::mem::size_of_val(&self.coeff) * 8;
+			let target_bit:usize = thread_rng().gen_range(0, bitlen);
+			let byte = target_bit / 8;
+			let bit = target_bit % 8;
 
-    	for i in 0..res.coeff.len() {
-    		res.coeff[i] = self.coeff[i] + random() * 0.001
-    	}
-    	res
+			(*(bytes.offset(byte as isize))) ^= 1 << bit;
+		}
+
+		res
     }
 
     fn mate(a: &Self, b:&Self) -> (Self, Self) {
@@ -85,10 +102,10 @@ impl Control {
     }
 
     fn calc_angle(&self, t: f32) -> f32{
-    	let mut control_angle = f32::consts::PI / 2.; //start vertical
+    	let mut control_angle = f32::consts::FRAC_PI_2; //start vertical
 
-    	for i in 0..self.coeff.len() {
-    		control_angle += self.coeff[i] * t.powf(i as f32);
+    	for i in 0..self.coeff.len() {	
+    		control_angle += self.coeff[i] * t.powf(i as f32 + 1.);
     	}
     	control_angle
     }
@@ -108,22 +125,23 @@ impl Control {
 
     	let endpoint = self.calc_endpoint(vessel);
 
-    	let distance_from_target = (target_y - endpoint.y).abs();
+    	let distance_from_target = (target_y - endpoint.pos.y).abs();
 
-    	self.fitness = Some(distance_from_target - endpoint.v_x);
-    }
+    	let f = distance_from_target - endpoint.vel.x;
 
-    fn fitness(&self) -> f32 {
-    	self.fitness.unwrap()
+    	self.fitness = if f.is_normal() && endpoint.pos.y > 10. {
+    		Some(f)
+    	}
+    	else {
+    		Some(f32::MAX)
+    	}
     }
 }
 
-
+#[derive(Debug)]
 struct Trajectory {
-	y: f32,
-	x: f32,
-	v_x: f32,
-	v_y: f32,
+	pos: Vector2<f32>,
+	vel: Vector2<f32>,
 	fuel_mass: f32,
 	t: f32,
 }
@@ -131,40 +149,56 @@ struct Trajectory {
 impl Trajectory {
 	fn new(vessel: &Vessel) -> Self {
 		Trajectory {
-			x: 0.,
-			y: 0.,
-			v_x: 0.,
-			v_y: 0.,
+			pos: Vector2::new(0.,0.),
+			vel: Vector2::new(0.,0.),
 			t: 0.,
 			fuel_mass: vessel.fuel_mass,
 		}
 	}
 
 	fn step(&mut self, control: &Control, vessel: &Vessel, dt: f32) -> bool {
-		let throttle = if self.fuel_mass > 0. {
-			vessel.find_throttle_for_TWR(control.twr)
-		} 
-		else {
-			0.
-		};
-
-
+		
 		self.t += dt;
 
-		self.fuel_mass -= throttle * vessel.max_burn * dt;
+		let drag = if self.vel.length2() > 0. {
+			let V = self.vel.length();
+			let p = atmospheric_pressure(self.pos.y);
 
-		let mass = self.fuel_mass + vessel.dry_mass;
-		let control_angle = control.calc_angle(self.t);
+			let d = p * V * V * vessel.cross_section * 0.00001;
 
-		let accel = (throttle * vessel.max_thrust * dt) / mass;
+			-self.vel.normalize() * d
+		}
+		else {
+			Vector2::new(0.,0.)
+		};
 
-		self.v_x += accel * control_angle.cos() * dt;
-		self.v_y += (accel * control_angle.sin() - GRAVITY) * dt;
+		let thrust = if self.fuel_mass > 0. {
+			let throttle = vessel.find_throttle_for_twr(control.twr);
 
-		self.x += self.v_x * dt;
-		self.y += self.v_y * dt;
+			self.fuel_mass -= throttle * vessel.max_burn * dt;
 
-		self.v_y > 0.
+			let mass = self.fuel_mass + vessel.dry_mass;
+
+			let control_angle = control.calc_angle(self.t);
+
+			let mut accel = (throttle * vessel.max_thrust * dt) / mass;
+
+			Vector2::new(
+				accel * control_angle.cos(),
+				accel * control_angle.sin(),
+			)
+		} 
+		else {
+			Vector2::new(0.,0.)
+		};
+
+		self.vel.x += (thrust.x + drag.x) * dt;
+		self.vel.y += (thrust.y + drag.y - GRAVITY) * dt;
+
+		self.pos.x += self.vel.x * dt;
+		self.pos.y += self.vel.y * dt;
+
+		self.vel.y > 0.
 	}
 }
 
@@ -175,7 +209,6 @@ struct Plot {
 
 impl Plot {
     fn new() -> Self {
-    	let mut fg = Figure::new();
     	Plot {
     		figure: Figure::new(),
     		trajectories: VecDeque::new(),
@@ -190,18 +223,20 @@ impl Plot {
 		let mut y_points:Vec<f32> = vec![];
 
 	   	while trajectory.step(&control, &vessel, 1.0) {
-		    x_points.push(trajectory.x);
-		    y_points.push(trajectory.y);
+		    x_points.push(trajectory.pos.x);
+		    y_points.push(trajectory.pos.y);
 		}
 
-		if self.trajectories.len() > 5 {
-			self.trajectories.pop_front();
-		}
+		if x_points.len() > 2 {
+			if self.trajectories.len() > 5 {
+				self.trajectories.pop_front();
+			}
 
-		self.trajectories.push_back((
-			x_points,
-			y_points
-		));
+			self.trajectories.push_back((
+				x_points,
+				y_points
+			));
+		}
     }
 
 
@@ -209,7 +244,7 @@ impl Plot {
 		self.figure.clear_axes();
 		{
 			let mut plot = self.figure.axes2d();
-	    	plot.set_x_range(Fix(0.0), Fix(160000.0));
+	    	plot.set_x_range(Fix(-100.0), Fix(160000.0));
 	    	plot.set_y_range(Fix(0.0), Fix(160000.0));
 
 			for t in &self.trajectories {
@@ -232,12 +267,10 @@ fn sort_solutions(solutions: &mut [Control], vessel: &Vessel) {
 	for i in 0..solutions.len() {
 		solutions[i].calc_fitness(&vessel);
 	}
-	
-	solutions.sort_by(|a, b| {
-		a.fitness().partial_cmp(&b.fitness()).unwrap()
-	});
 
-	assert!(solutions[0].fitness() <= solutions[solutions.len()-1].fitness());
+	solutions.sort_by(|a, b| {
+		a.fitness.unwrap().partial_cmp(&b.fitness.unwrap()).unwrap()
+	});
 }
 
 fn main() {
@@ -248,39 +281,43 @@ fn main() {
 		max_burn: 63.98,
 		dry_mass: 2776.32,
 		fuel_mass: 4035.,
+		cross_section: 1.5,
 	};
 
-	let size = 500;
+	let size = 10;
 
 	let mut solutions:Vec<Control> = vec![Control::zero(); size];
-	// for s in &mut solutions {
-	// 	*s = Control::random();
-	// }
 
-	let mut best_fitness = 9999999999.;
+	let mut best_fitness = f32::MAX;
 	loop {
 		sort_solutions(&mut solutions, &vessel);
 
-		if solutions[0].fitness() < best_fitness {
-			best_fitness = solutions[0].fitness();
-			println!("New best fitness: {}", best_fitness);
-			println!("{:?}", solutions[0]);
+		if let Some(fitness) = solutions[0].fitness {
+			if fitness < best_fitness {
+				best_fitness = fitness;
+				println!("New best fitness: {}", best_fitness);
+				println!("{:?}", solutions[0]);
 
-			plot.add_trajectory(&vessel, &solutions[0]);
-			plot.refresh();
-
-			// if best_fitness < 100. {
-			// 	break;
-			// }
+				plot.add_trajectory(&vessel, &solutions[0]);
+				plot.refresh();
+			}
 		}
 
-		//kill the lowest performing half
-		solutions.truncate(size/2);
+		//reproduce the first half
 
-		//reproduce everyone
-		for i in 0..size/2 {
-			let spawn = solutions[i].mutated();
-			solutions.push(spawn);
+		let mut new_gen = Vec::with_capacity(size);
+			for i in 0..size/2 {
+			let j:usize = thread_rng().gen_range(0, size/2);
+
+			let spawn = Control::mate(
+				&solutions[i],
+				&solutions[j]
+			);
+
+			new_gen.push(spawn.0);
+			new_gen.push(spawn.1);
 		}
+
+		solutions = new_gen;
 	}
 }
