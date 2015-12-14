@@ -2,6 +2,7 @@ extern crate rand;
 extern crate gnuplot;
 extern crate cgmath;
 
+use std::cmp;
 use std::cmp::Ordering;
 use gnuplot::*;
 use std::f32;
@@ -11,6 +12,8 @@ use cgmath::{Vector, Vector2, EuclideanVector};
 
 const GRAVITY:f32 = 9.81;
 const COEFFICIENTS:usize = 4;
+const SIM_STEP:f32 = 0.1;
+
 
 fn lerp(src: f32, dst: f32, alpha: f32) -> f32 {
 	src + (dst - src) * alpha
@@ -115,7 +118,7 @@ impl Control {
     	let mut trajectory = Trajectory::new(vessel);
 
     	//advance
-    	while trajectory.step(self, vessel, 1.0) {}
+    	while trajectory.step(self, vessel, SIM_STEP) {}
 
     	trajectory
     }
@@ -160,7 +163,7 @@ impl Trajectory {
 		
 		self.t += dt;
 
-		let drag = if self.vel.length2() > 0. {
+		let drag = if self.vel.length2() > 0. && false /*HACK*/ {
 			let V = self.vel.length();
 			let p = atmospheric_pressure(self.pos.y);
 
@@ -181,7 +184,7 @@ impl Trajectory {
 
 			let control_angle = control.calc_angle(self.t);
 
-			let mut accel = (throttle * vessel.max_thrust * dt) / mass;
+			let mut accel = (throttle * vessel.max_thrust) / mass;
 
 			Vector2::new(
 				accel * control_angle.cos(),
@@ -222,7 +225,7 @@ impl Plot {
 		let mut x_points:Vec<f32> = vec![];
 		let mut y_points:Vec<f32> = vec![];
 
-	   	while trajectory.step(&control, &vessel, 1.0) {
+	   	while trajectory.step(&control, &vessel, SIM_STEP) {
 		    x_points.push(trajectory.pos.x);
 		    y_points.push(trajectory.pos.y);
 		}
@@ -244,8 +247,11 @@ impl Plot {
 		self.figure.clear_axes();
 		{
 			let mut plot = self.figure.axes2d();
-	    	plot.set_x_range(Fix(-100.0), Fix(160000.0));
-	    	plot.set_y_range(Fix(0.0), Fix(160000.0));
+
+			let r = 11./16.;
+			plot.set_aspect_ratio(Fix(r as f64));
+	    	plot.set_x_range(Fix(-100.0), Fix(140000.0));
+	    	plot.set_y_range(Fix(-100.0), Fix(140000.0 * r));
 
 			for t in &self.trajectories {
 				plot.lines(
@@ -284,7 +290,7 @@ fn main() {
 		cross_section: 1.5,
 	};
 
-	let size = 10;
+	let size = 20;
 
 	let mut solutions:Vec<Control> = vec![Control::zero(); size];
 
