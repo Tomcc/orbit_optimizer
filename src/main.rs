@@ -10,10 +10,15 @@ use std::collections::VecDeque;
 use rand::*;
 use cgmath::{Vector, Vector2, EuclideanVector};
 
-const GRAVITY:f32 = 9.81;
 const COEFFICIENTS:usize = 4;
 const SIM_STEP:f32 = 0.1;
+const G:f64 = 6.67384E-11;
+const PLANET_MASS:f64 = 5.2915793E22;
+const PLANET_RADIUS:f64 = 600000.;
 
+fn gravity_at(h: f32) -> f32 {
+	((G * PLANET_MASS) / (PLANET_RADIUS + h as f64).powf(2.)) as f32
+}
 
 fn lerp(src: f32, dst: f32, alpha: f32) -> f32 {
 	src + (dst - src) * alpha
@@ -35,6 +40,7 @@ struct Vessel {
     dry_mass: f32,
     fuel_mass: f32,
     cross_section: f32,
+    starting_height: f32,
 }
 
 impl Vessel {
@@ -42,8 +48,11 @@ impl Vessel {
 		self.dry_mass + self.fuel_mass
 	}
 
-	fn find_throttle_for_twr(&self, twr: f32) -> f32 {
-		(twr * self.mass() * GRAVITY) / self.max_thrust
+	fn find_throttle_for_twr(&self, twr: f32, h:f32) -> f32 {
+		assert!(twr > 0.);
+		let t = (twr * self.mass() * gravity_at(h)) / self.max_thrust;
+		assert!(t <= 1.);
+		t
 	}
 }
 
@@ -115,7 +124,7 @@ impl Control {
 
     fn calc_endpoint(&self, vessel: &Vessel) -> Trajectory {
 
-    	let mut trajectory = Trajectory::new(vessel);
+    	let mut trajectory = Trajectory::new(vessel, self);
 
     	//advance
     	while trajectory.step(self, vessel, SIM_STEP) {}
@@ -147,15 +156,17 @@ struct Trajectory {
 	vel: Vector2<f32>,
 	fuel_mass: f32,
 	t: f32,
+	throttle: f32
 }
 
 impl Trajectory {
-	fn new(vessel: &Vessel) -> Self {
+	fn new(vessel: &Vessel, control: &Control) -> Self {
 		Trajectory {
-			pos: Vector2::new(0.,0.),
+			pos: Vector2::new(0.,vessel.starting_height),
 			vel: Vector2::new(0.,0.),
 			t: 0.,
 			fuel_mass: vessel.fuel_mass,
+			throttle: vessel.find_throttle_for_twr(control.twr, vessel.starting_height),
 		}
 	}
 
@@ -176,15 +187,13 @@ impl Trajectory {
 		};
 
 		let thrust = if self.fuel_mass > 0. {
-			let throttle = vessel.find_throttle_for_twr(control.twr);
-
-			self.fuel_mass -= throttle * vessel.max_burn * dt;
+			self.fuel_mass -= self.throttle * vessel.max_burn * dt;
 
 			let mass = self.fuel_mass + vessel.dry_mass;
 
 			let control_angle = control.calc_angle(self.t);
 
-			let mut accel = (throttle * vessel.max_thrust) / mass;
+			let mut accel = (self.throttle * vessel.max_thrust) / mass;
 
 			Vector2::new(
 				accel * control_angle.cos(),
@@ -196,7 +205,7 @@ impl Trajectory {
 		};
 
 		self.vel.x += (thrust.x + drag.x) * dt;
-		self.vel.y += (thrust.y + drag.y - GRAVITY) * dt;
+		self.vel.y += (thrust.y + drag.y - gravity_at(self.pos.y)) * dt;
 
 		self.pos.x += self.vel.x * dt;
 		self.pos.y += self.vel.y * dt;
@@ -220,12 +229,19 @@ impl Plot {
 
     fn add_trajectory(&mut self, vessel: &Vessel, control: &Control) {
 
-		let mut trajectory = Trajectory::new(&vessel);
+		let mut trajectory = Trajectory::new(&vessel, &control);
 
 		let mut x_points:Vec<f32> = vec![];
 		let mut y_points:Vec<f32> = vec![];
 
-	   	while trajectory.step(&control, &vessel, SIM_STEP) {
+	   	loop {
+
+	   		trajectory.step(&control, &vessel, SIM_STEP);
+
+	   		if trajectory.pos.y < 0. {
+	   			break;
+	   		}
+
 		    x_points.push(trajectory.pos.x);
 		    y_points.push(trajectory.pos.y);
 		}
@@ -288,6 +304,7 @@ fn main() {
 		dry_mass: 2776.32,
 		fuel_mass: 4035.,
 		cross_section: 1.5,
+		starting_height: 0.,
 	};
 
 	let size = 20;
