@@ -3,7 +3,7 @@ extern crate gnuplot;
 extern crate cgmath;
 
 use gnuplot::*;
-use std::f64;
+use std::{f64, f32};
 use std::collections::VecDeque;
 use rand::*;
 use cgmath::{Vector, Vector2, EuclideanVector};
@@ -34,7 +34,7 @@ fn altitude(pos: Vector2<f64>) -> f64 {
 	(pos - PLANET_CENTER).length() - PLANET_RADIUS
 }
 
-fn lerp(src: f64, dst: f64, alpha: f64) -> f64 {
+fn lerp(src: f32, dst: f32, alpha: f32) -> f32 {
 	src + (dst - src) * alpha
 }
 
@@ -77,7 +77,7 @@ impl Vessel {
 
 #[derive(Clone,Debug)]
 struct Control {
-    coeff: [f64; COEFFICIENTS],
+    coeff: [f32; COEFFICIENTS],
     twr: f64,
     fitness: Option<f64>
 }
@@ -99,7 +99,7 @@ impl Control {
 		}
 	}
 
-    fn lerp(a: &Self, b:&Self, s: f64) -> Self {
+    fn lerp(a: &Self, b:&Self, s: f32) -> Self {
     	let mut res = Control::zero();
 
     	for i in 0..res.coeff.len() {
@@ -132,11 +132,11 @@ impl Control {
     	)
     }
 
-    fn calc_angle(&self, t: f64) -> f64{
-    	let mut control_angle = f64::consts::FRAC_PI_2; //start vertical
+    fn calc_angle(&self, t: f32) -> f32 {
+    	let mut control_angle = f32::consts::FRAC_PI_2; //start vertical
 
     	for i in 0..self.coeff.len() {	
-    		control_angle += self.coeff[i] * t.powf(i as f64 + 1.);
+    		control_angle += self.coeff[i] * t.powf(i as f32 + 1.);
     	}
     	control_angle
     }
@@ -176,7 +176,7 @@ struct Trajectory {
 	fuel_mass: f64,
 	t: f64,
 	throttle: f64,
-	control_angle:f64,
+	control_angle:f32,
 }
 
 impl Trajectory {
@@ -188,7 +188,7 @@ impl Trajectory {
 			t: 0.,
 			fuel_mass: vessel.fuel_mass,
 			throttle: vessel.find_throttle_for_twr(control.twr, start_pos),
-			control_angle: f64::consts::FRAC_PI_2,
+			control_angle: f32::consts::FRAC_PI_2,
 		}
 	}
 
@@ -225,13 +225,13 @@ impl Trajectory {
 
 			let mass = self.fuel_mass + vessel.dry_mass;
 
-			self.control_angle = control.calc_angle(self.t);
+			self.control_angle = control.calc_angle(self.t as f32);
 
 			let mut accel = (self.throttle * vessel.max_thrust) / mass;
 
 			Vector2::new(
-				accel * self.control_angle.cos(),
-				accel * self.control_angle.sin(),
+				accel * self.control_angle.cos() as f64,
+				accel * self.control_angle.sin() as f64,
 			)
 		} 
 		else {
@@ -263,7 +263,7 @@ impl Plot {
 
     fn add_trajectory(&mut self, vessel: &Vessel, control: &Control) {
 
-    	let RADDEG = 180. / f64::consts::PI;
+    	let RADDEG = 180. / f32::consts::PI;
 
 		let mut trajectory = Trajectory::new(&vessel, &control);
 
@@ -275,7 +275,7 @@ impl Plot {
 	   	while trajectory.step(&control, &vessel, SIM_STEP) {
 		    x_points.push(trajectory.pos.x as f32);
 		    y_points.push(trajectory.pos.y as f32);
-		    a_points.push((trajectory.control_angle * RADDEG * 1000.) as f32);
+		    a_points.push((trajectory.control_angle * RADDEG * 1000.));
 			f_points.push(trajectory.fuel_mass as f32 * 10.);
 		}
 
