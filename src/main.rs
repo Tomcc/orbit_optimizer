@@ -13,6 +13,7 @@ const SIM_STEP:f64 = 0.1;
 const G:f64 = 6.67384E-11;
 const PLANET_MASS:f64 = 5.2915793E22;
 const PLANET_RADIUS:f64 = 600000.;
+const PLANET_ROTATION_PERIOD:f64 = 21549.425;
 const PLANET_CENTER:Vector2<f64> = Vector2{x: 0., y: -PLANET_RADIUS};
 
 fn gravity_at(pos: Vector2<f64>) -> Vector2<f64> {
@@ -21,6 +22,12 @@ fn gravity_at(pos: Vector2<f64>) -> Vector2<f64> {
 	let n = dist.normalize();
 
 	n * (G * PLANET_MASS / d2)
+}
+
+fn equatorial_velocity_at(pos: Vector2<f64>) -> f64 {
+	let h = altitude(pos);
+
+	(f64::consts::PI * 2. * h) / PLANET_ROTATION_PERIOD
 }
 
 fn altitude(pos: Vector2<f64>) -> f64 {
@@ -177,7 +184,7 @@ impl Trajectory {
 		let start_pos = Vector2::new(0.,vessel.starting_height);
 		Trajectory {
 			pos: start_pos,
-			vel: Vector2::new(0.,0.),
+			vel: Vector2::new( equatorial_velocity_at(start_pos),0.),
 			t: 0.,
 			fuel_mass: vessel.fuel_mass,
 			throttle: vessel.find_throttle_for_twr(control.twr, start_pos),
