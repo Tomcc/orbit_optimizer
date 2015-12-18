@@ -8,36 +8,42 @@ use std::collections::VecDeque;
 use rand::*;
 use cgmath::{Vector, Vector2, EuclideanVector};
 
-const COEFFICIENTS:usize = 2;
+const COEFFICIENTS:usize = 3;
 const SIM_STEP:f64 = 0.1;
 const G:f64 = 6.67384E-11;
 const PLANET_MASS:f64 = 5.2915793E22;
 const PLANET_RADIUS:f64 = 600000.;
-const PLANET_CENTER:Vector2<f64> = Vector2{x: 0., y: PLANET_RADIUS};
+const PLANET_CENTER:Vector2<f64> = Vector2{x: 0., y: -PLANET_RADIUS};
 
 fn gravity_at(pos: Vector2<f64>) -> Vector2<f64> {
-	Vector2{
-		x: 0.,
-		y: -((G * PLANET_MASS) / (PLANET_RADIUS + pos.y).powf(2.))
-	}
+	let dist = PLANET_CENTER - pos;
+	let d2 = dist.length2();
+	let n = dist.normalize();
+
+	n * (G * PLANET_MASS / d2)
 }
 
 fn altitude(pos: Vector2<f64>) -> f64 {
-	pos.y
+	(pos - PLANET_CENTER).length() - PLANET_RADIUS
 }
 
 fn lerp(src: f64, dst: f64, alpha: f64) -> f64 {
 	src + (dst - src) * alpha
 }
 
+fn down_at(pos: Vector2<f64>) -> Vector2<f64> {
+	(PLANET_CENTER - pos).normalize()
+}
+
 fn atmospheric_pressure(pos: Vector2<f64>) -> f64 {
-	let H = 70000.;
-	if pos.y >= H {
-		0.
-	}
-	else {
-		f64::consts::E.powf(-pos.y/70000.)
-	}
+	// let H = 70000.;
+	// if pos.y >= H {
+	// 	0.
+	// }
+	// else {
+	// 	f64::consts::E.powf(-pos.y/70000.)
+	// }
+	0.
 }
 
 struct Vessel {
@@ -147,7 +153,7 @@ impl Control {
 
     	let f = distance_from_target - endpoint.tangent_speed();
 
-    	self.fitness = if f.is_normal() && endpoint.altitude() > 10. {
+    	self.fitness = if f.is_normal() && endpoint.altitude() > 10. && endpoint.control_angle > 0. {
     		Some(f)
     	}
     	else {
@@ -184,11 +190,11 @@ impl Trajectory {
 	}
 
 	fn vertical_speed(&self) -> f64 {
-		self.vel.y
+		down_at(self.pos).dot(self.vel)
 	}
 
 	fn tangent_speed(&self) -> f64 {
-		self.vel.x
+		down_at(self.pos).perp_dot(self.vel)
 	}
 
 	fn step(&mut self, control: &Control, vessel: &Vessel, dt: f64) -> bool {
@@ -227,13 +233,11 @@ impl Trajectory {
 
 		let g = gravity_at(self.pos);
 
-		self.vel.x += (thrust.x + drag.x + g.x) * dt;
-		self.vel.y += (thrust.y + drag.y + g.y) * dt;
+		self.vel = self.vel + (thrust + drag + g) * dt;
 
-		self.pos.x += self.vel.x * dt;
-		self.pos.y += self.vel.y * dt;
+		self.pos = self.pos + self.vel * dt;
 
-		self.vertical_speed() > 0.
+		self.vertical_speed() < 0.
 	}
 }
 
@@ -349,7 +353,7 @@ fn main() {
 		starting_height: 0.,
 	};
 
-	let size = 20;
+	let size = 100;
 
 	let mut solutions:Vec<Control> = vec![Control::zero(); size];
 
