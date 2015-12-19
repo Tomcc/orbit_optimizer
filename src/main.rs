@@ -102,7 +102,7 @@ impl Control {
     fn lerp(a: &Self, b:&Self, s: f32) -> Self {
     	let mut res = Control::zero();
 
-    	for i in 0..res.coeff.len() {
+    	for i in 0..COEFFICIENTS {
     		res.coeff[i] = lerp(a.coeff[i], b.coeff[i], s);
     	}
 
@@ -123,6 +123,16 @@ impl Control {
 		}
 
 		res
+    }
+
+    fn distance(&self, other:&Control) -> f32 {
+    	let mut dist = 0.;
+
+    	for i in 0..COEFFICIENTS {
+    		dist += (self.coeff[i] - other.coeff[i]).powf(2.);
+    	}
+
+    	dist.sqrt()
     }
 
     fn mate(a: &Self, b:&Self) -> (Self, Self) {
@@ -158,7 +168,7 @@ impl Control {
 
     	let distance_from_target = (target_alt - endpoint.altitude()).abs();
 
-    	let f = distance_from_target - endpoint.tangent_speed();
+    	let f = distance_from_target - endpoint.tangent_speed() * 10. + (endpoint.vertical_speed() * 10.).abs();
 
     	self.fitness = if f.is_normal() && endpoint.altitude() > 10. && endpoint.control_angle > 0. {
     		Some(f)
@@ -301,8 +311,8 @@ impl Plot {
 
 			let r = 11./16.;
 			plot.set_aspect_ratio(Fix(r as f64));
-	    	plot.set_x_range(Fix(-100.0), Fix(140000.0));
-	    	plot.set_y_range(Fix(-100.0), Fix(140000.0 * r));
+	    	// plot.set_x_range(Fix(-100.0), Fix(140000.0));
+	    	// plot.set_y_range(Fix(-100.0), Fix(140000.0 * r));
 
 			for t in &self.trajectories {
 				plot.lines(
@@ -361,6 +371,8 @@ fn main() {
 	};
 
 	let size = 100;
+	let mating_pool_size = 10;
+	let catastrophe_generations = 10;
 
 	let mut solutions:Vec<Control> = vec![Control::zero(); size];
 
@@ -380,20 +392,24 @@ fn main() {
 		}
 
 		//reproduce the first half
-
+		solutions.truncate(size/2);
 		let mut new_gen = Vec::with_capacity(size);
-			for i in 0..size/2 {
-			let j:usize = thread_rng().gen_range(0, size/2);
+		for current in &solutions {
+
+			//find the N closest mates in terms of similarity
+			let mut closest: Vec<(f32, &Control)> = Vec::with_capacity(solutions.len());
+			for s in &solutions {
+				closest.push((s.distance(current), s))
+			}
 
 			let spawn = Control::mate(
-				&solutions[i],
-				&solutions[j]
+				current,
+				thread_rng().choose(&closest[1..mating_pool_size+1]).unwrap().1
 			);
 
 			new_gen.push(spawn.0);
 			new_gen.push(spawn.1);
 		}
-
 		solutions = new_gen;
 	}
 }
