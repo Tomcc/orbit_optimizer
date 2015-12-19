@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use rand::*;
 use cgmath::{Vector, Vector2, EuclideanVector};
 
-const COEFFICIENTS:usize = 3;
+const INITIAL_ANGLE:f32 = f32::consts::FRAC_PI_2;
+const COEFFICIENTS:usize = 2;
 const SIM_STEP:f64 = 0.1;
 const G:f64 = 6.67384E-11;
 const PLANET_MASS:f64 = 5.2915793E22;
@@ -59,7 +60,7 @@ struct Vessel {
     dry_mass: f64,
     fuel_mass: f64,
     cross_section: f64,
-    starting_height: f64,
+    starting_altitude: f64,
 }
 
 impl Vessel {
@@ -70,6 +71,7 @@ impl Vessel {
 	fn find_throttle_for_twr(&self, twr: f64, pos: Vector2<f64>) -> f64 {
 		assert!(twr > 0.);
 		let t = (twr * self.mass() * gravity_at(pos).length()) / self.max_thrust;
+
 		assert!(t <= 1.);
 		t
 	}
@@ -85,7 +87,7 @@ struct Control {
 impl Control {
     fn zero() -> Self {
     	Control {
-    		coeff:[0.;COEFFICIENTS],
+    		coeff:[-0.;COEFFICIENTS],
     		twr: 1.5, //maybe it should vary?
     		fitness: None
     	}
@@ -143,7 +145,7 @@ impl Control {
     }
 
     fn calc_angle(&self, t: f32) -> f32 {
-    	let mut control_angle = f32::consts::FRAC_PI_2; //start vertical
+    	let mut control_angle = INITIAL_ANGLE;
 
     	for i in 0..self.coeff.len() {	
     		control_angle += self.coeff[i] * t.powf(i as f32 + 1.);
@@ -168,9 +170,13 @@ impl Control {
 
     	let distance_from_target = (target_alt - endpoint.altitude()).abs();
 
-    	let f = distance_from_target - endpoint.tangent_speed() * 10. + (endpoint.vertical_speed() * 10.).abs();
+    	let f = distance_from_target - endpoint.tangent_speed() + (endpoint.vertical_speed() * 10.).abs();
 
-    	self.fitness = if f.is_normal() && endpoint.altitude() > 10. && endpoint.control_angle > 0. {
+    	self.fitness = if 
+    	f.is_normal()
+    	&& endpoint.altitude() > 10.
+    	&& endpoint.tangent_speed() > 0.
+    	{
     		Some(f)
     	}
     	else {
@@ -191,14 +197,14 @@ struct Trajectory {
 
 impl Trajectory {
 	fn new(vessel: &Vessel, control: &Control) -> Self {
-		let start_pos = Vector2::new(0.,vessel.starting_height);
+		let start_pos = Vector2::new(0.,vessel.starting_altitude);
 		Trajectory {
 			pos: start_pos,
 			vel: Vector2::new( equatorial_velocity_at(start_pos),0.),
 			t: 0.,
 			fuel_mass: vessel.fuel_mass,
 			throttle: vessel.find_throttle_for_twr(control.twr, start_pos),
-			control_angle: f32::consts::FRAC_PI_2,
+			control_angle: INITIAL_ANGLE,
 		}
 	}
 
@@ -234,6 +240,8 @@ impl Trajectory {
 			self.fuel_mass -= self.throttle * vessel.max_burn * dt;
 
 			let mass = self.fuel_mass + vessel.dry_mass;
+
+			//println!("THRUST {} THROTTLE {} FLOW {} ", self.throttle * vessel.max_thrust, self.throttle, self.throttle * vessel.max_burn);
 
 			self.control_angle = control.calc_angle(self.t as f32);
 
@@ -284,7 +292,7 @@ impl Plot {
 
 	   	while trajectory.step(&control, &vessel, SIM_STEP) {
 		    x_points.push(trajectory.pos.x as f32);
-		    y_points.push(trajectory.pos.y as f32);
+		    y_points.push(trajectory.altitude() as f32);
 		    a_points.push((trajectory.control_angle * RADDEG * 1000.));
 			f_points.push(trajectory.fuel_mass as f32 * 10.);
 		}
@@ -362,12 +370,12 @@ fn main() {
 	let mut plot = Plot::new();
 
 	let vessel = Vessel {
-		max_thrust: 170182.54,
-		max_burn: 63.98,
-		dry_mass: 2776.32,
-		fuel_mass: 4035.,
+		max_thrust: 199999.984741211,
+		max_burn: 63.7325586057756,
+		dry_mass: 2811.32459640503,
+		fuel_mass: 4000.,
 		cross_section: 1.5,
-		starting_height: 0.,
+		starting_altitude: 74.,
 	};
 
 	let size = 100;
@@ -411,5 +419,10 @@ fn main() {
 			new_gen.push(spawn.1);
 		}
 		solutions = new_gen;
+
+		if best_fitness > 0. && thread_rng().gen_weighted_bool(catastrophe_generations) {
+			println!("reset...");
+			solutions = vec![Control::zero(); size]; //restart
+		}
 	}
 }
