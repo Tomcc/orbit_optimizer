@@ -9,8 +9,8 @@ use rand::*;
 use cgmath::{Vector, Vector2, EuclideanVector};
 
 const INITIAL_ANGLE:f32 = f32::consts::FRAC_PI_2;
-const COEFFICIENTS:usize = 2;
-const SIM_STEP:f64 = 0.01;
+const COEFFICIENTS:usize = 3;
+const SIM_STEP:f64 = 0.1;
 const G:f64 = 6.67384E-11;
 const PLANET_MASS:f64 = 5.2915793E22;
 const PLANET_RADIUS:f64 = 600000.;
@@ -285,6 +285,7 @@ impl Plot {
 		let mut trajectory = Trajectory::new(&vessel, &control);
 
 		let mut x_points:Vec<f32> = vec![];
+		let mut t_points:Vec<f32> = vec![];
 		let mut y_points:Vec<f32> = vec![];
 		let mut a_points:Vec<f32> = vec![];
 		let mut f_points:Vec<f32> = vec![];
@@ -292,8 +293,11 @@ impl Plot {
 	   	while trajectory.step(&control, &vessel, SIM_STEP) {
 		    x_points.push(trajectory.pos.x as f32);
 		    y_points.push(trajectory.altitude() as f32);
-		    a_points.push((trajectory.control_angle * RADDEG * 1000.));
-			f_points.push(trajectory.fuel_mass as f32 * 10.);
+
+		    if trajectory.fuel_mass > 0. {
+			    t_points.push(trajectory.burn_time as f32 * 1000.);
+			    a_points.push((trajectory.control_angle * RADDEG * 1000.));
+			}
 		}
 
 		if x_points.len() > 2 {
@@ -304,8 +308,8 @@ impl Plot {
 			self.trajectories.push_back((
 				x_points,
 				y_points,
+				t_points,
 				a_points,
-				f_points,
 			));
 		}
     }
@@ -320,32 +324,25 @@ impl Plot {
 			plot.set_aspect_ratio(Fix(r as f64));
 	    	// plot.set_x_range(Fix(-100.0), Fix(140000.0));
 	    	// plot.set_y_range(Fix(-100.0), Fix(140000.0 * r));
+			for i in 0..self.trajectories.len() {
+				let mut last = i == self.trajectories.len()-1;
+				let t = &self.trajectories[i];
 
-			for t in &self.trajectories {
 				plot.lines(
 					&t.0,
 					&t.1,
 					&[
 						Caption("Best ascent"),
-						Color("black")
+						Color(if last { "black" } else { "gray" })
 					]
 				);
 
 				plot.lines(
-					&t.0,
 					&t.2,
-					&[
-						Caption("Angles"),
-						Color("red")
-					]
-				);
-
-				plot.lines(
-					&t.0,
 					&t.3,
 					&[
-						Caption("Fuel"),
-						Color("blue")
+						Caption("Angles"),
+						Color(if last { "red" } else { "gray" })
 					]
 				);
 			}
