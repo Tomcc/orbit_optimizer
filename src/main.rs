@@ -10,7 +10,7 @@ use cgmath::{Vector, Vector2, EuclideanVector};
 
 const INITIAL_ANGLE:f32 = f32::consts::FRAC_PI_2;
 const COEFFICIENTS:usize = 2;
-const SIM_STEP:f64 = 0.1;
+const SIM_STEP:f64 = 0.01;
 const G:f64 = 6.67384E-11;
 const PLANET_MASS:f64 = 5.2915793E22;
 const PLANET_RADIUS:f64 = 600000.;
@@ -154,7 +154,6 @@ impl Control {
     }
 
     fn calc_endpoint(&self, vessel: &Vessel) -> Trajectory {
-
     	let mut trajectory = Trajectory::new(vessel, self);
 
     	//advance
@@ -190,9 +189,9 @@ struct Trajectory {
 	pos: Vector2<f64>,
 	vel: Vector2<f64>,
 	fuel_mass: f64,
-	t: f64,
 	throttle: f64,
 	control_angle:f32,
+	burn_time:f64,
 }
 
 impl Trajectory {
@@ -201,7 +200,7 @@ impl Trajectory {
 		Trajectory {
 			pos: start_pos,
 			vel: Vector2::new( equatorial_velocity_at(start_pos),0.),
-			t: 0.,
+			burn_time: 0.,
 			fuel_mass: vessel.fuel_mass,
 			throttle: vessel.find_throttle_for_twr(control.twr, start_pos),
 			control_angle: INITIAL_ANGLE,
@@ -222,8 +221,6 @@ impl Trajectory {
 
 	fn step(&mut self, control: &Control, vessel: &Vessel, dt: f64) -> bool {
 		
-		self.t += dt;
-
 		let drag = if self.vel.length2() > 0. && false /*HACK*/ {
 			let V = self.vel.length();
 			let p = atmospheric_pressure(self.pos);
@@ -237,13 +234,15 @@ impl Trajectory {
 		};
 
 		let thrust = if self.fuel_mass > 0. {
+			self.burn_time += dt;
+
 			self.fuel_mass -= self.throttle * vessel.max_burn * dt;
 
 			let mass = self.fuel_mass + vessel.dry_mass;
 
 			//println!("THRUST {} THROTTLE {} FLOW {} ", self.throttle * vessel.max_thrust, self.throttle, self.throttle * vessel.max_burn);
 
-			self.control_angle = control.calc_angle(self.t as f32);
+			self.control_angle = control.calc_angle(self.burn_time as f32);
 
 			let mut accel = (self.throttle * vessel.max_thrust) / mass;
 
@@ -380,12 +379,14 @@ fn main() {
 
 	let size = 100;
 	let mating_pool_size = 10;
-	let catastrophe_generations = 10;
+	let catastrophe_generations = 50;
 
 	let mut solutions:Vec<Control> = vec![Control::zero(); size];
 
 	let mut best_fitness = f64::MAX;
+	let mut gen_since_last_best = 0;
 	loop {
+
 		sort_solutions(&mut solutions, &vessel);
 
 		if let Some(fitness) = solutions[0].fitness {
@@ -393,9 +394,13 @@ fn main() {
 				best_fitness = fitness;
 				println!("New best fitness: {}", best_fitness);
 				println!("{:?}", solutions[0]);
+				gen_since_last_best = 0;
 
 				plot.add_trajectory(&vessel, &solutions[0]);
 				plot.refresh();
+			}
+			else {		
+				gen_since_last_best += 1;
 			}
 		}
 
@@ -420,9 +425,10 @@ fn main() {
 		}
 		solutions = new_gen;
 
-		if best_fitness > 0. && thread_rng().gen_weighted_bool(catastrophe_generations) {
+		if gen_since_last_best > catastrophe_generations && thread_rng().gen_weighted_bool(catastrophe_generations) {
 			println!("reset...");
 			solutions = vec![Control::zero(); size]; //restart
+			gen_since_last_best = 0;
 		}
 	}
 }
